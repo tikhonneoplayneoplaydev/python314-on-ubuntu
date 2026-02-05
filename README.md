@@ -1,21 +1,43 @@
-# python314-on-ubuntu
+# Python 3.14 on Ubuntu (build from source)
 
-One-command build script for **Python 3.14.x** on Ubuntu.  
-Downloads sources, installs dependencies, builds with PGO, runs tests, and cleans up.
+Build and install Python 3.14 from source on Ubuntu using a single Bash script.
 
-`314` = Python 3.14 without dots (used for paths and names).
+No LTO. No hangs. Just works.
+
+---
+
+## Features
+
+- One Bash script
+- Automatic dependency installation
+- Build type selection (fast / optimized)
+- No LTO
+- Automatic sudo request
+- Post-install test
+- Automatic cleanup
+
+---
+
+## Build types
+
+### Fast build
+- Very fast compilation
+- No PGO
+
+### Optimized build
+- Uses PGO (`--enable-optimizations`)
+- Slower build
+
+LTO is intentionally disabled.
 
 ---
 
 ## Requirements
 
-- Ubuntu 22.04 / 24.04
-- ~20 minutes build time
-- ~3 GB free disk space **during build** (temporary)
-- Basic terminal usage
+- Ubuntu 20.04 / 22.04 / 24.04
+- ~3 GB free disk space
+- Internet connection
 - sudo access
-
-> Final installed Python size: ~60–100 MB
 
 ---
 
@@ -24,5 +46,9 @@ Downloads sources, installs dependencies, builds with PGO, runs tests, and clean
 ```bash
 git clone https://github.com/tikhonneoplayneoplaydev/python314-on-ubuntu.git
 cd python314-on-ubuntu
+
 chmod +x build.sh
 ./build.sh
+python3.14 --version
+/usr/local/bin/python3.14
+```
