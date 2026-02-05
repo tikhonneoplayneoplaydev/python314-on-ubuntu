@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 set -e
 
-# ================================
-# Python 3.14 full build script
-# downloads, builds, installs,
-# adds to PATH and runs tests/
-# ================================
+# =====================================================
+# Python 3.14 full builder + linker fix + tests runner
+# =====================================================
 
 PY_VER="3.14.3"
 PY_MAJ="3.14"
 SRC_URL="https://www.python.org/ftp/python/${PY_VER}/Python-${PY_VER}.tgz"
 WORKDIR="/tmp/python314-build"
 PREFIX="/usr/local/python314"
-TEST_DIR="tests"
 LINK_DIR="/usr/local/bin"
+TEST_DIR="tests"
 
 # ---------- sudo ----------
 if [ "$EUID" -ne 0 ]; then
@@ -21,37 +19,26 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 clear
-echo "========================================"
-echo " Python ${PY_VER} build & test script"
-echo "========================================"
+echo "==============================================="
+echo " Python ${PY_VER} build / install / test script"
+echo "==============================================="
 echo
 
-# ---------- BUILD OPTIONS ----------
+# ---------- BUILD TYPE ----------
 echo "Choose build type:"
-echo " 1) Minimal (no optimizations, fastest build)"
-echo " 2) Normal (recommended)"
+echo " 1) Minimal (fastest, no optimizations)"
+echo " 2) Normal (shared libs)"
 echo " 3) Optimized (PGO)"
 echo " 4) Optimized + LTO (slow, max performance)"
 echo
 read -rp "Select [1-4]: " BUILD_TYPE
 
 case "$BUILD_TYPE" in
-  1)
-    CONFIG_OPTS=""
-    ;;
-  2)
-    CONFIG_OPTS="--enable-shared"
-    ;;
-  3)
-    CONFIG_OPTS="--enable-shared --enable-optimizations"
-    ;;
-  4)
-    CONFIG_OPTS="--enable-shared --enable-optimizations --with-lto"
-    ;;
-  *)
-    echo "Invalid choice"
-    exit 1
-    ;;
+  1) CONFIG_OPTS="" ;;
+  2) CONFIG_OPTS="--enable-shared" ;;
+  3) CONFIG_OPTS="--enable-shared --enable-optimizations" ;;
+  4) CONFIG_OPTS="--enable-shared --enable-optimizations --with-lto" ;;
+  *) echo "Invalid option"; exit 1 ;;
 esac
 
 echo
@@ -87,13 +74,13 @@ cd "$WORKDIR"
 echo "Downloading Python ${PY_VER}..."
 wget -q "$SRC_URL"
 
-echo "Extracting sources..."
+echo "Extracting..."
 tar xf "Python-${PY_VER}.tgz"
 cd "Python-${PY_VER}"
 
 # ---------- CONFIGURE ----------
 echo
-echo "Configuring build..."
+echo "Configuring..."
 ./configure \
   --prefix="$PREFIX/$PY_VER" \
   --with-ensurepip=install \
@@ -101,18 +88,26 @@ echo "Configuring build..."
 
 # ---------- BUILD ----------
 echo
-echo "Building Python (this may take time)..."
+echo "Building (may take time)..."
 make -j"$(nproc)"
 
 # ---------- INSTALL ----------
 echo
-echo "Installing Python..."
+echo "Installing..."
 make install
 
-# ---------- SYMLINK CURRENT ----------
+# ---------- CURRENT SYMLINK ----------
 echo
 echo "Updating current symlink..."
 ln -sfn "$PREFIX/$PY_VER" "$PREFIX/current"
+
+# ---------- LIBRARY FIX ----------
+if echo "$CONFIG_OPTS" | grep -q enable-shared; then
+  echo
+  echo "Registering libpython in dynamic linker..."
+  echo "$PREFIX/current/lib" > /etc/ld.so.conf.d/python314.conf
+  ldconfig
+fi
 
 PY_BIN="$PREFIX/current/bin/python${PY_MAJ}"
 
@@ -135,9 +130,9 @@ echo "Python command: $PY_CMD"
 
 # ---------- TESTS ----------
 echo
-echo "========================================"
+echo "==============================================="
 echo " Running tests from ./$TEST_DIR"
-echo "========================================"
+echo "==============================================="
 
 if [ ! -d "$TEST_DIR" ]; then
   echo "ERROR: tests directory not found"
@@ -161,10 +156,9 @@ for t in "$TEST_DIR"/*.py; do
   echo
 done
 
-# ---------- RESULT ----------
-echo "========================================"
+echo "==============================================="
 echo " Tests passed: $PASSED / $TOTAL"
-echo "========================================"
+echo "==============================================="
 echo
-echo "DONE. Python installed and tested successfully."
-echo "Use: $PY_CMD"
+echo "DONE. Python installed and fully working."
+echo "Use command: $PY_CMD"
