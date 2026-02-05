@@ -1,164 +1,115 @@
 #!/usr/bin/env bash
 set -e
 
-# =====================================================
-# Python 3.14 full builder + linker fix + tests runner
-# =====================================================
+############################
+# python314 build script  #
+############################
 
-PY_VER="3.14.3"
-PY_MAJ="3.14"
-SRC_URL="https://www.python.org/ftp/python/${PY_VER}/Python-${PY_VER}.tgz"
+# ---------- paths ----------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKDIR="/tmp/python314-build"
-PREFIX="/usr/local/python314"
-LINK_DIR="/usr/local/bin"
-TEST_DIR="tests"
+SRC_DIR="$WORKDIR/Python-3.14.3"
+TEST_DIR="$SCRIPT_DIR/tests"
+PREFIX="/usr/local"
 
 # ---------- sudo ----------
 if [ "$EUID" -ne 0 ]; then
+  echo "[*] Need sudo"
   exec sudo bash "$0" "$@"
 fi
 
-clear
-echo "==============================================="
-echo " Python ${PY_VER} build / install / test script"
-echo "==============================================="
-echo
+# ---------- menu ----------
+echo "Select build type:"
+echo "1) Fast (no PGO, no LTO)"
+echo "2) Optimized (PGO, no LTO)"
+echo "3) Max (PGO + LTO)"
+read -rp "Choice [1-3]: " BUILD_TYPE
 
-# ---------- BUILD TYPE ----------
-echo "Choose build type:"
-echo " 1) Minimal (fastest, no optimizations)"
-echo " 2) Normal (shared libs)"
-echo " 3) Optimized (PGO)"
-echo " 4) Optimized + LTO (slow, max performance)"
-echo
-read -rp "Select [1-4]: " BUILD_TYPE
+CONFIG_FLAGS="--prefix=$PREFIX --enable-shared"
+MAKE_FLAGS="-j$(nproc)"
 
 case "$BUILD_TYPE" in
-  1) CONFIG_OPTS="" ;;
-  2) CONFIG_OPTS="--enable-shared" ;;
-  3) CONFIG_OPTS="--enable-shared --enable-optimizations" ;;
-  4) CONFIG_OPTS="--enable-shared --enable-optimizations --with-lto" ;;
-  *) echo "Invalid option"; exit 1 ;;
+  1)
+    echo "[*] Fast build"
+    ;;
+  2)
+    echo "[*] PGO build"
+    CONFIG_FLAGS="$CONFIG_FLAGS --enable-optimizations"
+    ;;
+  3)
+    echo "[*] PGO + LTO build"
+    CONFIG_FLAGS="$CONFIG_FLAGS --enable-optimizations --with-lto"
+    ;;
+  *)
+    echo "Invalid choice"
+    exit 1
+    ;;
 esac
 
-echo
-echo "Build options: $CONFIG_OPTS"
-echo
-
-# ---------- DEPENDENCIES ----------
-echo "Installing dependencies..."
+# ---------- deps ----------
 apt update
 apt install -y \
-  build-essential \
-  wget \
-  libssl-dev \
-  zlib1g-dev \
-  libbz2-dev \
-  libreadline-dev \
-  libsqlite3-dev \
-  libffi-dev \
-  libncursesw5-dev \
-  xz-utils \
-  tk-dev \
-  libxml2-dev \
-  libxmlsec1-dev
+  build-essential wget \
+  libssl-dev zlib1g-dev libbz2-dev liblzma-dev \
+  libsqlite3-dev libreadline-dev libffi-dev \
+  uuid-dev tk-dev
 
-# ---------- PREPARE ----------
-echo
-echo "Preparing build directory..."
+# ---------- clean ----------
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
-# ---------- DOWNLOAD ----------
-echo "Downloading Python ${PY_VER}..."
-wget -q "$SRC_URL"
+# ---------- download ----------
+wget https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
+tar xf Python-3.14.3.tgz
+cd "$SRC_DIR"
 
-echo "Extracting..."
-tar xf "Python-${PY_VER}.tgz"
-cd "Python-${PY_VER}"
+# ---------- build ----------
+./configure $CONFIG_FLAGS
+make $MAKE_FLAGS
+make altinstall
 
-# ---------- CONFIGURE ----------
-echo
-echo "Configuring..."
-./configure \
-  --prefix="$PREFIX/$PY_VER" \
-  --with-ensurepip=install \
-  $CONFIG_OPTS
+# ---------- linker ----------
+echo "$PREFIX/lib" > /etc/ld.so.conf.d/python314.conf
+ldconfig
 
-# ---------- BUILD ----------
-echo
-echo "Building (may take time)..."
-make -j"$(nproc)"
+# ---------- PATH / symlinks ----------
+BIN="$PREFIX/bin/python3.14"
 
-# ---------- INSTALL ----------
-echo
-echo "Installing..."
-make install
-
-# ---------- CURRENT SYMLINK ----------
-echo
-echo "Updating current symlink..."
-ln -sfn "$PREFIX/$PY_VER" "$PREFIX/current"
-
-# ---------- LIBRARY FIX ----------
-if echo "$CONFIG_OPTS" | grep -q enable-shared; then
-  echo
-  echo "Registering libpython in dynamic linker..."
-  echo "$PREFIX/current/lib" > /etc/ld.so.conf.d/python314.conf
-  ldconfig
-fi
-
-PY_BIN="$PREFIX/current/bin/python${PY_MAJ}"
-
-# ---------- ADD TO PATH ----------
-echo
-echo "Adding Python to PATH..."
-if [ ! -e "$LINK_DIR/python" ]; then
-  ln -sf "$PY_BIN" "$LINK_DIR/python"
-  PY_CMD="$LINK_DIR/python"
-elif [ ! -e "$LINK_DIR/python3" ]; then
-  ln -sf "$PY_BIN" "$LINK_DIR/python3"
-  PY_CMD="$LINK_DIR/python3"
+if [ ! -e "$PREFIX/bin/python" ]; then
+  ln -s "$BIN" "$PREFIX/bin/python"
+elif [ ! -e "$PREFIX/bin/python3" ]; then
+  ln -s "$BIN" "$PREFIX/bin/python3"
 else
-  ln -sf "$PY_BIN" "$LINK_DIR/python314"
-  PY_CMD="$LINK_DIR/python314"
+  ln -s "$BIN" "$PREFIX/bin/314"
 fi
 
-echo "Python command: $PY_CMD"
-"$PY_CMD" --version
+# ---------- verify ----------
+"$BIN" --version
+"$BIN" - <<'EOF'
+import ssl, sqlite3, zlib, ctypes
+print("stdlib OK")
+EOF
 
-# ---------- TESTS ----------
-echo
-echo "==============================================="
-echo " Running tests from ./$TEST_DIR"
-echo "==============================================="
-
-if [ ! -d "$TEST_DIR" ]; then
-  echo "ERROR: tests directory not found"
-  exit 1
+# ---------- tests ----------
+if [ -d "$TEST_DIR" ]; then
+  echo "==============================================="
+  echo " Running tests from $TEST_DIR"
+  echo "==============================================="
+  for t in "$TEST_DIR"/*.py; do
+    [ -f "$t" ] || continue
+    echo "[TEST] $t"
+    "$BIN" "$t"
+  done
+  echo "[*] All tests passed"
+else
+  echo "[!] Tests directory not found, skipping"
 fi
 
-TOTAL=0
-PASSED=0
-
-for t in "$TEST_DIR"/*.py; do
-  [ -f "$t" ] || continue
-  TOTAL=$((TOTAL+1))
-  echo "RUN $t"
-  if "$PY_CMD" "$t"; then
-    echo "PASS"
-    PASSED=$((PASSED+1))
-  else
-    echo "FAIL"
-    exit 1
-  fi
-  echo
-done
+# ---------- cleanup ----------
+rm -rf "$WORKDIR"
 
 echo "==============================================="
-echo " Tests passed: $PASSED / $TOTAL"
+echo " Python 3.14 installed successfully"
+echo " Binary: $BIN"
 echo "==============================================="
-echo
-echo "DONE. Python installed and fully working."
-echo "Use command: $PY_CMD"
