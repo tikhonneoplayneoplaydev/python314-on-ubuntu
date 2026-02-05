@@ -28,7 +28,6 @@ No LTO. No hangs. Just works.
 - Uses PGO (`--enable-optimizations`)
 - Slower build
 
-LTO is intentionally disabled.
 
 ---
 
