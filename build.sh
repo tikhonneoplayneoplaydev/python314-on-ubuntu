@@ -1,114 +1,170 @@
 #!/usr/bin/env bash
 set -e
 
-### ===== sudo auto-request =====
-if [[ $EUID -ne 0 ]]; then
-  echo "🔒 Root privileges required. Asking for sudo..."
+# ================================
+# Python 3.14 full build script
+# downloads, builds, installs,
+# adds to PATH and runs tests/
+# ================================
+
+PY_VER="3.14.3"
+PY_MAJ="3.14"
+SRC_URL="https://www.python.org/ftp/python/${PY_VER}/Python-${PY_VER}.tgz"
+WORKDIR="/tmp/python314-build"
+PREFIX="/usr/local/python314"
+TEST_DIR="tests"
+LINK_DIR="/usr/local/bin"
+
+# ---------- sudo ----------
+if [ "$EUID" -ne 0 ]; then
   exec sudo bash "$0" "$@"
 fi
 
-### ===== config =====
-PY_VERSION="3.14.3"
-PY_TARBALL="Python-$PY_VERSION.tgz"
-PY_DIR="Python-$PY_VERSION"
-BUILD_ROOT="/tmp/python314-build"
-INSTALL_PREFIX="/usr/local"
+clear
+echo "========================================"
+echo " Python ${PY_VER} build & test script"
+echo "========================================"
+echo
 
-### ===== choose build type =====
-echo "======================================"
-echo " Choose Python build type (NO LTO)"
-echo "======================================"
-echo "1) Fast build (recommended)"
-echo "   - very fast"
-echo "   - no PGO"
+# ---------- BUILD OPTIONS ----------
+echo "Choose build type:"
+echo " 1) Minimal (no optimizations, fastest build)"
+echo " 2) Normal (recommended)"
+echo " 3) Optimized (PGO)"
+echo " 4) Optimized + LTO (slow, max performance)"
 echo
-echo "2) Optimized build"
-echo "   - uses PGO"
-echo "   - slower build"
-echo
-read -rp "Select option [1-2]: " BUILD_TYPE
+read -rp "Select [1-4]: " BUILD_TYPE
 
 case "$BUILD_TYPE" in
   1)
-    CONFIGURE_FLAGS="--prefix=$INSTALL_PREFIX"
-    BUILD_NAME="FAST"
+    CONFIG_OPTS=""
     ;;
   2)
-    CONFIGURE_FLAGS="--prefix=$INSTALL_PREFIX --enable-optimizations"
-    BUILD_NAME="OPTIMIZED (PGO)"
+    CONFIG_OPTS="--enable-shared"
+    ;;
+  3)
+    CONFIG_OPTS="--enable-shared --enable-optimizations"
+    ;;
+  4)
+    CONFIG_OPTS="--enable-shared --enable-optimizations --with-lto"
     ;;
   *)
-    echo "❌ Invalid option"
+    echo "Invalid choice"
     exit 1
     ;;
 esac
 
-echo "✅ Selected: $BUILD_NAME build"
+echo
+echo "Build options: $CONFIG_OPTS"
 echo
 
-### ===== deps =====
-echo "📦 Installing build dependencies..."
+# ---------- DEPENDENCIES ----------
+echo "Installing dependencies..."
 apt update
 apt install -y \
   build-essential \
   wget \
   libssl-dev \
   zlib1g-dev \
-  libncurses5-dev \
-  libncursesw5-dev \
+  libbz2-dev \
   libreadline-dev \
   libsqlite3-dev \
   libffi-dev \
-  libbz2-dev \
-  liblzma-dev \
-  uuid-dev \
-  tk-dev
+  libncursesw5-dev \
+  xz-utils \
+  tk-dev \
+  libxml2-dev \
+  libxmlsec1-dev
 
-### ===== prepare =====
-echo "📁 Preparing build directory..."
-rm -rf "$BUILD_ROOT"
-mkdir -p "$BUILD_ROOT"
-cd "$BUILD_ROOT"
+# ---------- PREPARE ----------
+echo
+echo "Preparing build directory..."
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
 
-### ===== download =====
-if [ ! -f "$PY_TARBALL" ]; then
-  echo "⬇️  Downloading Python $PY_VERSION..."
-  wget https://www.python.org/ftp/python/$PY_VERSION/$PY_TARBALL
-fi
+# ---------- DOWNLOAD ----------
+echo "Downloading Python ${PY_VER}..."
+wget -q "$SRC_URL"
 
-### ===== extract =====
-echo "📦 Extracting sources..."
-tar -xf "$PY_TARBALL"
-cd "$PY_DIR"
+echo "Extracting sources..."
+tar xf "Python-${PY_VER}.tgz"
+cd "Python-${PY_VER}"
 
-### ===== configure =====
-echo "⚙️  Configuring ($BUILD_NAME)..."
-./configure $CONFIGURE_FLAGS
+# ---------- CONFIGURE ----------
+echo
+echo "Configuring build..."
+./configure \
+  --prefix="$PREFIX/$PY_VER" \
+  --with-ensurepip=install \
+  $CONFIG_OPTS
 
-### ===== build =====
-echo "🛠️  Building..."
+# ---------- BUILD ----------
+echo
+echo "Building Python (this may take time)..."
 make -j"$(nproc)"
 
-### ===== install =====
-echo "📥 Installing..."
-make altinstall
-
-### ===== ldconfig =====
-echo "🔗 Updating linker cache..."
-ldconfig
-
-### ===== test =====
-echo "🧪 Running test..."
-"$INSTALL_PREFIX/bin/python3.14" - <<EOF
-import sys, ssl, sqlite3, zlib, ctypes
-print("✅ Python OK")
-print("Version:", sys.version)
-EOF
-
-### ===== cleanup =====
-echo "🧹 Cleaning up..."
-rm -rf "$BUILD_ROOT"
-
+# ---------- INSTALL ----------
 echo
-echo "🎉 Done!"
-echo "👉 Run: python3.14 --version"
+echo "Installing Python..."
+make install
+
+# ---------- SYMLINK CURRENT ----------
+echo
+echo "Updating current symlink..."
+ln -sfn "$PREFIX/$PY_VER" "$PREFIX/current"
+
+PY_BIN="$PREFIX/current/bin/python${PY_MAJ}"
+
+# ---------- ADD TO PATH ----------
+echo
+echo "Adding Python to PATH..."
+if [ ! -e "$LINK_DIR/python" ]; then
+  ln -sf "$PY_BIN" "$LINK_DIR/python"
+  PY_CMD="$LINK_DIR/python"
+elif [ ! -e "$LINK_DIR/python3" ]; then
+  ln -sf "$PY_BIN" "$LINK_DIR/python3"
+  PY_CMD="$LINK_DIR/python3"
+else
+  ln -sf "$PY_BIN" "$LINK_DIR/python314"
+  PY_CMD="$LINK_DIR/python314"
+fi
+
+echo "Python command: $PY_CMD"
+"$PY_CMD" --version
+
+# ---------- TESTS ----------
+echo
+echo "========================================"
+echo " Running tests from ./$TEST_DIR"
+echo "========================================"
+
+if [ ! -d "$TEST_DIR" ]; then
+  echo "ERROR: tests directory not found"
+  exit 1
+fi
+
+TOTAL=0
+PASSED=0
+
+for t in "$TEST_DIR"/*.py; do
+  [ -f "$t" ] || continue
+  TOTAL=$((TOTAL+1))
+  echo "RUN $t"
+  if "$PY_CMD" "$t"; then
+    echo "PASS"
+    PASSED=$((PASSED+1))
+  else
+    echo "FAIL"
+    exit 1
+  fi
+  echo
+done
+
+# ---------- RESULT ----------
+echo "========================================"
+echo " Tests passed: $PASSED / $TOTAL"
+echo "========================================"
+echo
+echo "DONE. Python installed and tested successfully."
+echo "Use: $PY_CMD"
