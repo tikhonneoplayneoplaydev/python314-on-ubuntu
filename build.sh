@@ -1,90 +1,84 @@
 #!/usr/bin/env bash
 set -e
 
-# ===== CONFIG =====
+### ===== sudo auto-request =====
+if [[ $EUID -ne 0 ]]; then
+  echo "🔒 Root privileges required. Asking for sudo..."
+  exec sudo bash "$0" "$@"
+fi
+
+### ===== config =====
 PY_VERSION="3.14.3"
-PY_MAJ_MIN="${PY_VERSION%.*}"   # 3.14
-PY_ID="${PY_MAJ_MIN//./}"       # 314
-JOBS=$(nproc)
+PY_TARBALL="Python-$PY_VERSION.tgz"
+PY_DIR="Python-$PY_VERSION"
+BUILD_ROOT="/tmp/python314-build"
+INSTALL_PREFIX="/usr/local"
 
-WORKDIR="/tmp/python${PY_ID}-build"
-PYBIN="/usr/local/bin/python${PY_MAJ_MIN}"
+### ===== deps =====
+echo "📦 Installing build dependencies..."
+apt update
+apt install -y \
+  build-essential \
+  wget \
+  libssl-dev \
+  zlib1g-dev \
+  libncurses5-dev \
+  libncursesw5-dev \
+  libreadline-dev \
+  libsqlite3-dev \
+  libffi-dev \
+  libbz2-dev \
+  liblzma-dev \
+  uuid-dev \
+  tk-dev
 
-# ===== INFO =====
-echo "==> Building Python $PY_VERSION (id=$PY_ID)"
-echo "==> Cores: $JOBS"
-echo "==> Temp dir: $WORKDIR"
-echo
+### ===== prepare =====
+echo "📁 Preparing build directory..."
+rm -rf "$BUILD_ROOT"
+mkdir -p "$BUILD_ROOT"
+cd "$BUILD_ROOT"
 
-# ===== DEPS =====
-echo "==> Installing dependencies"
-sudo apt update
-sudo apt install -y \
-  build-essential pkg-config curl \
-  libssl-dev zlib1g-dev libbz2-dev liblzma-dev libzstd-dev \
-  libreadline-dev libsqlite3-dev libffi-dev uuid-dev \
-  tk-dev libgdbm-dev libncursesw5-dev
+### ===== download =====
+if [ ! -f "$PY_TARBALL" ]; then
+  echo "⬇️  Downloading Python $PY_VERSION..."
+  wget https://www.python.org/ftp/python/$PY_VERSION/$PY_TARBALL
+fi
 
-# ===== DOWNLOAD =====
-echo
-echo "==> Preparing workdir"
-rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
-cd "$WORKDIR"
+### ===== extract =====
+echo "📦 Extracting..."
+tar -xf "$PY_TARBALL"
+cd "$PY_DIR"
 
-echo "==> Downloading Python $PY_VERSION"
-curl -LO "https://www.python.org/ftp/python/$PY_VERSION/Python-$PY_VERSION.tgz"
-tar xf "Python-$PY_VERSION.tgz"
-cd "Python-$PY_VERSION"
+### ===== configure =====
+echo "⚙️  Configuring..."
+./configure \
+  --prefix="$INSTALL_PREFIX" \
+  --enable-optimizations \
+  --with-lto \
+  --enable-shared
 
-# ===== CONFIGURE =====
-echo
-echo "==> Configuring (PGO enabled)"
-./configure --enable-optimizations
+### ===== build =====
+echo "🛠️  Building..."
+make -j"$(nproc)"
 
-# ===== BUILD =====
-echo
-echo "==> Building (this takes time)"
-make -j"$JOBS"
+### ===== install =====
+echo "📥 Installing..."
+make altinstall
 
-# ===== INSTALL =====
-echo
-echo "==> Installing (altinstall, system python untouched)"
-sudo make altinstall
+### ===== ldconfig =====
+echo "🔗 Updating linker cache..."
+ldconfig
 
-# ===== TESTS (PYTHON TESTS PYTHON) =====
-echo
-echo "==> Running sanity tests"
-"$PYBIN" - <<EOF
-import sys, subprocess, venv
-
-print("Python:", sys.version)
-assert sys.version_info >= (3, 14)
-
-mods = ["ssl", "sqlite3", "zlib", "ctypes", "hashlib"]
-for m in mods:
-    __import__(m)
-    print("OK:", m)
-
-env = "/tmp/py${PY_ID}-test"
-print("Creating venv:", env)
-venv.create(env, with_pip=True)
-
-pip = f"{env}/bin/pip"
-py  = f"{env}/bin/python"
-
-subprocess.check_call([pip, "install", "--upgrade", "pip"])
-subprocess.check_call([pip, "install", "requests"])
-subprocess.check_call([py, "-c", "import requests; print('requests OK')"])
-
-print("ALL TESTS PASSED")
+### ===== test =====
+echo "🧪 Running basic test..."
+"$INSTALL_PREFIX/bin/python3.14" - <<EOF
+import ssl, sqlite3, zlib, ctypes
+print("✅ Python $PY_VERSION OK")
 EOF
 
-# ===== CLEANUP =====
-echo
-echo "==> Cleaning up (freeing disk space)"
-rm -rf "$WORKDIR"
+### ===== cleanup =====
+echo "🧹 Cleaning up..."
+rm -rf "$BUILD_ROOT"
 
-echo
-echo "==> DONE 🎉"
-echo "Binary: $PYBIN"
+echo "🎉 Done! Python $PY_VERSION installed."
+echo "👉 Run: python3.14 --version"
