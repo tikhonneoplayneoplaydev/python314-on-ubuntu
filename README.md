@@ -11,7 +11,6 @@ No hangs. Just works.
 - One Bash script
 - Automatic dependency installation
 - Build type selection (fast / optimized)
-- No LTO
 - Automatic sudo request
 - Post-install test
 - Automatic cleanup
