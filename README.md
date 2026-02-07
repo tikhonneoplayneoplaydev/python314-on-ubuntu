@@ -2,7 +2,7 @@
 
 Build and install Python 3.14 from source on Ubuntu using a single Bash script.
 
-No LTO. No hangs. Just works.
+No hangs. Just works.
 
 ---
 
